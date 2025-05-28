@@ -124,13 +124,15 @@ async def gemini_live_audio(websocket: WebSocket):
                         if data["type"] == "audio":
                             # Send audio data to Gemini
                             audio_data = base64.b64decode(data["data"])
+                            logger.info(f"Sending audio data: {len(audio_data)} bytes")
                             await session.send(input={
                                 "data": audio_data,
-                                "mime_type": "audio/pcm"
+                                "mime_type": "audio/webm"  # Changed from audio/pcm to webm
                             })
                             
                         elif data["type"] == "text":
                             # Send text message to Gemini
+                            logger.info(f"Sending text: {data['text']}")
                             await session.send(input=data["text"], end_of_turn=True)
                             
                         elif data["type"] == "config":
