@@ -196,44 +196,37 @@ async def gemini_live_audio(websocket: WebSocket):
                     while True:
                         turn = session.receive()
                         async for response in turn:
-                            logger.info(f"Received response: {type(response)}")
+                            logger.info(f"Processing response...")
                             
-                            # Handle different response types
-                            if hasattr(response, 'data') and response.data:
-                                # Send audio response back to client
-                                audio_b64 = base64.b64encode(response.data).decode('utf-8')
-                                await websocket.send_json({
-                                    "type": "audio_response",
-                                    "data": audio_b64
-                                })
-                                logger.info("Sent audio response to client")
-                            
-                            if hasattr(response, 'text') and response.text:
-                                # Send text response back to client
+                            # Try to get text content
+                            response_text = getattr(response, 'text', None)
+                            if response_text:
                                 await websocket.send_json({
                                     "type": "text_response",
-                                    "text": response.text
+                                    "text": response_text
                                 })
-                                logger.info(f"Sent text response: {response.text}")
+                                logger.info(f"Sent text: {response_text}")
                             
-                            # Check for parts in response
-                            if hasattr(response, 'parts'):
+                            # Check for parts which contain the actual audio data
+                            if hasattr(response, 'parts') and response.parts:
                                 for part in response.parts:
-                                    if hasattr(part, 'inline_data') and part.inline_data:
-                                        # Handle inline audio data
-                                        audio_b64 = base64.b64encode(part.inline_data.data).decode('utf-8')
-                                        await websocket.send_json({
-                                            "type": "audio_response",
-                                            "data": audio_b64
-                                        })
-                                        logger.info("Sent inline audio response to client")
-                                    
+                                    # Handle text parts
                                     if hasattr(part, 'text') and part.text:
                                         await websocket.send_json({
                                             "type": "text_response",
                                             "text": part.text
                                         })
-                                        logger.info(f"Sent part text response: {part.text}")
+                                        logger.info(f"Sent part text: {part.text}")
+                                    
+                                    # Handle audio parts (inline_data)
+                                    if hasattr(part, 'inline_data') and part.inline_data:
+                                        if hasattr(part.inline_data, 'data') and part.inline_data.data:
+                                            audio_b64 = base64.b64encode(part.inline_data.data).decode('utf-8')
+                                            await websocket.send_json({
+                                                "type": "audio_response",
+                                                "data": audio_b64
+                                            })
+                                            logger.info(f"Sent audio chunk: {len(part.inline_data.data)} bytes")
                                         
                 except Exception as e:
                     logger.error(f"Error handling Gemini responses: {str(e)}")
