@@ -198,32 +198,23 @@ async def gemini_live_audio(websocket: WebSocket):
                         async for response in turn:
                             logger.info(f"=== DEBUGGING RESPONSE ===")
                             logger.info(f"Response type: {type(response)}")
-                            logger.info(f"Response dir: {dir(response)}")
                             
-                            # Try to get text content directly
-                            try:
-                                response_text = str(response.text) if hasattr(response, 'text') else "No text attr"
-                                logger.info(f"Direct text: {response_text}")
-                                if response_text and response_text != "No text attr" and response_text.strip():
-                                    await websocket.send_json({
-                                        "type": "text_response",
-                                        "text": response_text
-                                    })
-                                    logger.info(f"✅ Sent text: {response_text}")
-                            except Exception as e:
-                                logger.error(f"Error getting text: {e}")
-                            
-                            # Check for parts
-                            if hasattr(response, 'parts'):
-                                logger.info(f"Found parts: {len(response.parts) if response.parts else 0}")
-                                if response.parts:
-                                    for i, part in enumerate(response.parts):
+                            # Check server_content which contains the actual model response
+                            if hasattr(response, 'server_content') and response.server_content:
+                                server_content = response.server_content
+                                logger.info(f"Server content type: {type(server_content)}")
+                                logger.info(f"Server content dir: {dir(server_content)}")
+                                
+                                # Check for model_parts in server_content
+                                if hasattr(server_content, 'model_parts') and server_content.model_parts:
+                                    logger.info(f"Found model_parts: {len(server_content.model_parts)}")
+                                    for i, part in enumerate(server_content.model_parts):
                                         logger.info(f"Part {i} type: {type(part)}")
                                         logger.info(f"Part {i} dir: {dir(part)}")
                                         
                                         # Handle text parts
-                                        if hasattr(part, 'text'):
-                                            part_text = str(part.text) if part.text else ""
+                                        if hasattr(part, 'text') and part.text:
+                                            part_text = str(part.text)
                                             logger.info(f"Part {i} text: '{part_text}'")
                                             if part_text.strip():
                                                 await websocket.send_json({
@@ -233,20 +224,20 @@ async def gemini_live_audio(websocket: WebSocket):
                                                 logger.info(f"✅ Sent part text: {part_text}")
                                         
                                         # Handle audio parts (inline_data)
-                                        if hasattr(part, 'inline_data'):
-                                            logger.info(f"Part {i} has inline_data: {part.inline_data is not None}")
-                                            if part.inline_data and hasattr(part.inline_data, 'data'):
+                                        if hasattr(part, 'inline_data') and part.inline_data:
+                                            if hasattr(part.inline_data, 'data') and part.inline_data.data:
                                                 audio_data = part.inline_data.data
-                                                logger.info(f"Audio data size: {len(audio_data) if audio_data else 0}")
-                                                if audio_data and len(audio_data) > 0:
-                                                    audio_b64 = base64.b64encode(audio_data).decode('utf-8')
-                                                    await websocket.send_json({
-                                                        "type": "audio_response",
-                                                        "data": audio_b64
-                                                    })
-                                                    logger.info(f"✅ Sent audio chunk: {len(audio_data)} bytes")
+                                                logger.info(f"Audio data size: {len(audio_data)} bytes")
+                                                audio_b64 = base64.b64encode(audio_data).decode('utf-8')
+                                                await websocket.send_json({
+                                                    "type": "audio_response",
+                                                    "data": audio_b64
+                                                })
+                                                logger.info(f"✅ Sent audio chunk: {len(audio_data)} bytes")
+                                else:
+                                    logger.info("No model_parts found in server_content")
                             else:
-                                logger.info("No parts attribute found")
+                                logger.info("No server_content found")
                                         
                 except Exception as e:
                     logger.error(f"Error handling Gemini responses: {str(e)}")
