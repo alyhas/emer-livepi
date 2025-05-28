@@ -191,6 +191,17 @@ function App() {
     }
   };
 
+  const testTextMessage = () => {
+    if (isConnected && wsRef.current) {
+      setAiResponse(""); // Clear previous response
+      console.log("Sending test message to Gemini");
+      wsRef.current.send(JSON.stringify({
+        type: "text",
+        text: "Hello Gemini! Please respond with both text and audio."
+      }));
+    }
+  };
+
   const sendTextMessage = () => {
     const textInput = document.getElementById('textInput');
     const text = textInput.value.trim();
