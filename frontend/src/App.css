@@ -2,41 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Custom scrollbar for textarea */
-textarea::-webkit-scrollbar {
-  width: 8px;
-}
-
-textarea::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
-}
-
-textarea::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.3);
-  border-radius: 4px;
-}
-
-textarea::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.5);
-}
-
-/* Audio player styling */
-audio {
-  filter: sepia(20%) saturate(70%) grayscale(1) contrast(99%) invert(12%);
-}
-
-audio::-webkit-media-controls-panel {
-  background-color: rgba(255, 255, 255, 0.1);
-}
-
-/* Animation for streaming indicator */
+/* Custom animations */
 @keyframes pulse-glow {
   0%, 100% {
-    text-shadow: 0 0 5px rgba(59, 130, 246, 0.5);
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
   }
   50% {
-    text-shadow: 0 0 20px rgba(59, 130, 246, 0.8), 0 0 30px rgba(59, 130, 246, 0.6);
+    box-shadow: 0 0 40px rgba(59, 130, 246, 0.6);
   }
 }
 
@@ -44,14 +16,48 @@ audio::-webkit-media-controls-panel {
   animation: pulse-glow 2s ease-in-out infinite;
 }
 
-/* Glass morphism effect for containers */
-.glass {
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+/* Audio visualization */
+@keyframes audio-wave {
+  0%, 100% { height: 10px; }
+  50% { height: 30px; }
 }
 
-/* Gradient background animation */
+.audio-wave {
+  width: 4px;
+  background: linear-gradient(to top, #3b82f6, #8b5cf6);
+  margin: 0 2px;
+  animation: audio-wave 1s ease-in-out infinite;
+}
+
+.audio-wave:nth-child(1) { animation-delay: 0s; }
+.audio-wave:nth-child(2) { animation-delay: 0.1s; }
+.audio-wave:nth-child(3) { animation-delay: 0.2s; }
+.audio-wave:nth-child(4) { animation-delay: 0.3s; }
+.audio-wave:nth-child(5) { animation-delay: 0.4s; }
+
+/* Microphone button effects */
+.mic-button {
+  transition: all 0.3s ease;
+  transform-origin: center;
+}
+
+.mic-button:hover {
+  transform: scale(1.1);
+}
+
+.mic-button:active {
+  transform: scale(0.95);
+}
+
+/* Glass morphism enhancements */
+.glass-effect {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+}
+
+/* Gradient text animation */
 @keyframes gradient-shift {
   0% {
     background-position: 0% 50%;
@@ -64,7 +70,47 @@ audio::-webkit-media-controls-panel {
   }
 }
 
-.animate-gradient {
-  background-size: 200% 200%;
-  animation: gradient-shift 8s ease infinite;
+.animate-gradient-text {
+  background: linear-gradient(-45deg, #3b82f6, #8b5cf6, #ec4899, #f59e0b);
+  background-size: 400% 400%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: gradient-shift 3s ease infinite;
+}
+
+/* Status indicator */
+.status-dot {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Response text animation */
+@keyframes typewriter {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
+.typewriter {
+  animation: typewriter 2s steps(40, end);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.5);
 }

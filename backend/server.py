@@ -12,9 +12,10 @@ import uuid
 from datetime import datetime
 import json
 import asyncio
+import base64
+
 import google.genai as genai
 from google.genai import types
-import io
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -29,7 +30,19 @@ GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY not found in environment variables")
 
-gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+genai_client = genai.Client(
+    http_options={"api_version": "v1beta"},
+    api_key=GEMINI_API_KEY,
+)
+
+MODEL = "models/gemini-2.0-flash-live-001"
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Create the main app without a prefix
 app = FastAPI()
@@ -46,14 +59,10 @@ class StatusCheck(BaseModel):
 class StatusCheckCreate(BaseModel):
     client_name: str
 
-class TextToSpeechRequest(BaseModel):
-    text: str
-    voice: str = "Kore"  # Default voice
-
 # Add your routes to the router instead of directly to app
 @api_router.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"message": "Gemini Live API Audio Dialog"}
 
 @api_router.post("/status", response_model=StatusCheck)
 async def create_status_check(input: StatusCheckCreate):
@@ -67,114 +76,113 @@ async def get_status_checks():
     status_checks = await db.status_checks.find().to_list(1000)
     return [StatusCheck(**status_check) for status_check in status_checks]
 
-@api_router.post("/text-to-speech-stream")
-async def text_to_speech_stream(request: TextToSpeechRequest):
-    """
-    Stream audio from text using Gemini Live API
-    """
-    try:
-        # Configure the session for audio responses
-        config = types.LiveConnectConfig(
-            response_modalities=["AUDIO"],
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=request.voice)
-                )
-            )
-        )
-
-        async def generate_audio():
-            try:
-                # Create a live session using the correct API
-                async with gemini_client.aio.live.connect(model='gemini-2.0-flash-exp', config=config) as session:
-                    # Send text input to the model
-                    await session.send(input=request.text, end_of_turn=True)
-
-                    # Receive and yield the streaming audio response
-                    async for message in session.receive():
-                        if message.data:
-                            yield message.data
-                            
-            except Exception as e:
-                logger.error(f"Error in audio generation: {str(e)}")
-                raise
-
-        return StreamingResponse(
-            generate_audio(), 
-            media_type="audio/wav",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-            }
-        )
-
-    except Exception as e:
-        logger.error(f"Error in text_to_speech_stream: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Text-to-speech streaming failed: {str(e)}")
-
 @api_router.get("/voices")
 async def get_available_voices():
-    """
-    Get list of available voices
-    """
+    """Get list of available voices for Gemini Live API"""
     voices = ["Puck", "Charon", "Kore", "Fenrir", "Aoede", "Leda", "Orus", "Zephyr"]
     return {"voices": voices}
 
-# WebSocket endpoint for real-time streaming
-@api_router.websocket("/tts-websocket")
-async def websocket_tts(websocket: WebSocket):
+# WebSocket endpoint for Gemini Live Audio Dialog
+@api_router.websocket("/live-audio")
+async def gemini_live_audio(websocket: WebSocket):
     await websocket.accept()
+    logger.info("WebSocket connected for Gemini Live Audio")
+    
+    # Default configuration for audio dialog
+    config = types.LiveConnectConfig(
+        response_modalities=["AUDIO"],
+        media_resolution="MEDIA_RESOLUTION_MEDIUM",
+        speech_config=types.SpeechConfig(
+            language_code="en-US",
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Puck")
+            )
+        ),
+        context_window_compression=types.ContextWindowCompressionConfig(
+            trigger_tokens=25600,
+            sliding_window=types.SlidingWindow(target_tokens=12800),
+        ),
+    )
     
     try:
-        while True:
-            # Receive text from client
-            data = await websocket.receive_text()
-            message = json.loads(data)
+        async with genai_client.aio.live.connect(model=MODEL, config=config) as session:
+            logger.info("Connected to Gemini Live API")
             
-            text = message.get("text", "")
-            voice = message.get("voice", "Kore")
+            # Send initial system message
+            await websocket.send_json({
+                "type": "system",
+                "message": "Connected to Gemini Live API. You can now talk!"
+            })
             
-            if not text:
-                await websocket.send_json({"error": "No text provided"})
-                continue
-            
-            try:
-                # Configure the session for audio responses
-                config = types.LiveConnectConfig(
-                    response_modalities=["AUDIO"],
-                    speech_config=types.SpeechConfig(
-                        voice_config=types.VoiceConfig(
-                            prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice)
-                        )
-                    )
-                )
-
-                # Create a live session using the correct API
-                async with gemini_client.aio.live.connect(model='gemini-2.0-flash-exp', config=config) as session:
-                    # Send text input to the model
-                    await session.send(input=text, end_of_turn=True)
-
-                    # Send streaming audio response
-                    async for message_resp in session.receive():
-                        if message_resp.data:
-                            # Convert audio bytes to base64 for JSON transmission
-                            import base64
-                            audio_b64 = base64.b64encode(message_resp.data).decode('utf-8')
-                            await websocket.send_json({
-                                "type": "audio_chunk",
-                                "data": audio_b64
+            async def handle_websocket_messages():
+                """Handle incoming messages from the client"""
+                try:
+                    while True:
+                        message = await websocket.receive_text()
+                        data = json.loads(message)
+                        
+                        if data["type"] == "audio":
+                            # Send audio data to Gemini
+                            audio_data = base64.b64decode(data["data"])
+                            await session.send(input={
+                                "data": audio_data,
+                                "mime_type": "audio/pcm"
                             })
-                
-                await websocket.send_json({"type": "end"})
-                
-            except Exception as e:
-                logger.error(f"Error in WebSocket TTS: {str(e)}")
-                await websocket.send_json({"error": str(e)})
-                    
+                            
+                        elif data["type"] == "text":
+                            # Send text message to Gemini
+                            await session.send(input=data["text"], end_of_turn=True)
+                            
+                        elif data["type"] == "config":
+                            # Update voice configuration if needed
+                            logger.info(f"Config update: {data}")
+                            
+                except WebSocketDisconnect:
+                    logger.info("WebSocket disconnected")
+                except Exception as e:
+                    logger.error(f"Error handling websocket messages: {str(e)}")
+            
+            async def handle_gemini_responses():
+                """Handle responses from Gemini Live API"""
+                try:
+                    while True:
+                        turn = session.receive()
+                        async for response in turn:
+                            if response.data:
+                                # Send audio response back to client
+                                audio_b64 = base64.b64encode(response.data).decode('utf-8')
+                                await websocket.send_json({
+                                    "type": "audio_response",
+                                    "data": audio_b64
+                                })
+                            
+                            if response.text:
+                                # Send text response back to client
+                                await websocket.send_json({
+                                    "type": "text_response",
+                                    "text": response.text
+                                })
+                                
+                except Exception as e:
+                    logger.error(f"Error handling Gemini responses: {str(e)}")
+            
+            # Run both handlers concurrently
+            await asyncio.gather(
+                handle_websocket_messages(),
+                handle_gemini_responses()
+            )
+            
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected")
     except Exception as e:
-        logger.error(f"WebSocket error: {str(e)}")
+        logger.error(f"Error in live audio websocket: {str(e)}")
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": str(e)
+            })
+        except:
+            pass
 
 # Include the router in the main app
 app.include_router(api_router)
@@ -186,13 +194,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
