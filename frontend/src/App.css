@@ -1,38 +1,70 @@
-.App {
-    text-align: center;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom scrollbar for textarea */
+textarea::-webkit-scrollbar {
+  width: 8px;
 }
 
-.App-logo {
-    height: 40vmin;
-    pointer-events: none;
+textarea::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-    .App-logo {
-        animation: App-logo-spin infinite 20s linear;
-    }
+textarea::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
 }
 
-.App-header {
-    background-color: #0f0f10;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    font-size: calc(10px + 2vmin);
-    color: white;
+textarea::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.5);
 }
 
-.App-link {
-    color: #61dafb;
+/* Audio player styling */
+audio {
+  filter: sepia(20%) saturate(70%) grayscale(1) contrast(99%) invert(12%);
 }
 
-@keyframes App-logo-spin {
-    from {
-        transform: rotate(0deg);
-    }
-    to {
-        transform: rotate(360deg);
-    }
+audio::-webkit-media-controls-panel {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Animation for streaming indicator */
+@keyframes pulse-glow {
+  0%, 100% {
+    text-shadow: 0 0 5px rgba(59, 130, 246, 0.5);
+  }
+  50% {
+    text-shadow: 0 0 20px rgba(59, 130, 246, 0.8), 0 0 30px rgba(59, 130, 246, 0.6);
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Glass morphism effect for containers */
+.glass {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* Gradient background animation */
+@keyframes gradient-shift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.animate-gradient {
+  background-size: 200% 200%;
+  animation: gradient-shift 8s ease infinite;
 }
