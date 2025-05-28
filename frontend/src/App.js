@@ -49,21 +49,28 @@ function App() {
       };
 
       wsRef.current.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        console.log("Received from Gemini:", data);
-        
-        if (data.type === "audio_response") {
-          // Play audio response from Gemini
-          console.log("Playing audio response, size:", data.data.length);
-          playAudioResponse(data.data);
-        } else if (data.type === "text_response") {
-          console.log("Received text response:", data.text);
-          setAiResponse(prev => prev + data.text);
-        } else if (data.type === "system") {
-          console.log("System message:", data.message);
-        } else if (data.type === "error") {
-          console.error("Gemini error:", data.message);
-          setConnectionStatus("Error: " + data.message);
+        if (typeof event.data === 'string') {
+          // Handle JSON messages (text_chunk, system, error)
+          const data = JSON.parse(event.data);
+          console.log("Received JSON from Gemini:", data);
+
+          if (data.type === "text_chunk") { // Updated from "text_response"
+            console.log("Received text chunk:", data.text);
+            setAiResponse(prev => prev + data.text);
+          } else if (data.type === "system") {
+            console.log("System message:", data.message);
+            setConnectionStatus(data.message); // Keep this to update UI
+          } else if (data.type === "error") {
+            console.error("Gemini error:", data.message);
+            setConnectionStatus("Error: " + data.message);
+          }
+        } else if (event.data instanceof Blob || event.data instanceof ArrayBuffer) {
+          // Handle binary messages (audio)
+          console.log("Received binary audio data from Gemini");
+          // Pass the raw Blob/ArrayBuffer to playAudioResponse
+          playAudioResponse(event.data); 
+        } else {
+          console.warn("Received unknown message type:", typeof event.data, event.data);
         }
       };
 
@@ -85,39 +92,60 @@ function App() {
     }
   }, []);
 
-  const playAudioResponse = async (audioBase64) => {
-    try {
-      setIsPlaying(true);
-      
-      // Convert base64 to audio buffer
-      const audioData = atob(audioBase64);
-      const audioBuffer = new Uint8Array(audioData.length);
-      for (let i = 0; i < audioData.length; i++) {
-        audioBuffer[i] = audioData.charCodeAt(i);
-      }
-      
-      // Create audio context if needed
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      
-      // Create audio blob and play
-      const blob = new Blob([audioBuffer], { type: 'audio/wav' });
-      const audioUrl = URL.createObjectURL(blob);
-      const audio = new Audio(audioUrl);
-      
-      audio.onended = () => {
-        setIsPlaying(false);
-        URL.revokeObjectURL(audioUrl);
-      };
-      
-      await audio.play();
-      
-    } catch (error) {
-      console.error("Error playing audio:", error);
-      setIsPlaying(false);
+const playAudioResponse = async (audioData) => { // audioData is now a Blob or ArrayBuffer
+  try {
+    setIsPlaying(true);
+    
+    // Create audio context if needed (this part can remain similar)
+    if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
     }
-  };
+    
+    let blob;
+    if (audioData instanceof ArrayBuffer) {
+      // If backend sends ArrayBuffer, create a Blob. 
+      // Ensure correct MIME type; 'audio/webm' or 'audio/opus' might be more accurate
+      // if the Gemini API sends native Opus or WebM audio.
+      // For now, let's assume 'audio/webm' as MediaRecorder uses it.
+      // The backend doesn't specify a MIME type when sending bytes, so we infer.
+      blob = new Blob([audioData], { type: 'audio/webm' }); 
+    } else if (audioData instanceof Blob) {
+      // If backend sends a Blob directly
+      blob = audioData;
+    } else {
+      console.error("Unsupported audio data type:", typeof audioData);
+      setIsPlaying(false);
+      return;
+    }
+
+    const audioUrl = URL.createObjectURL(blob);
+    const audio = new Audio(audioUrl);
+    
+    audio.onloadedmetadata = () => {
+      console.log("Audio metadata loaded, duration:", audio.duration);
+    };
+    audio.oncanplaythrough = () => {
+      console.log("Audio can play through.");
+    };
+    audio.onerror = (e) => {
+      console.error("Error playing audio element:", e);
+      setIsPlaying(false);
+      URL.revokeObjectURL(audioUrl);
+    };
+    audio.onended = () => {
+      setIsPlaying(false);
+      URL.revokeObjectURL(audioUrl);
+    };
+    
+    await audio.play();
+    
+  } catch (error) {
+    console.error("Error playing audio:", error);
+    setIsPlaying(false);
+    // Potentially revoke URL here too if created and error occurs before onended
+    // (Handled by audio.onerror)
+  }
+};
 
   const startRecording = async () => {
     try {
