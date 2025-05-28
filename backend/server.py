@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime
 import json
 import asyncio
-from google import genai
+import google.genai as genai
 from google.genai import types
 import io
 
