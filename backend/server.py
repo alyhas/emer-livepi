@@ -136,12 +136,11 @@ async def gemini_live_audio(websocket: WebSocket):
     
     # Default configuration for audio dialog
     config = types.LiveConnectConfig(
-        response_modalities=[types.Modality.TEXT, types.Modality.AUDIO],
+        response_modalities=[types.Modality.AUDIO],
         media_resolution="MEDIA_RESOLUTION_MEDIUM",
         speech_config=types.SpeechConfig(
-            language_code="en-US",
             voice_config=types.VoiceConfig(
-                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Puck") # Or allow client to choose
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Zephyr")
             )
         ),
         context_window_compression=types.ContextWindowCompressionConfig(
@@ -160,67 +159,94 @@ async def gemini_live_audio(websocket: WebSocket):
                 "message": "Connected to Gemini Live API. You can now talk!"
             })
 
-            # Define the handler for client-to-Gemini messages
-            async def send_to_gemini(): # Note: This function will need access to 'websocket' and 'session' from the outer scope.
-                try:
-                    while True:
-                        text = await websocket.receive_text()
-                        data = json.loads(text)
+            client_q = asyncio.Queue(maxsize=5) 
+            gemini_q = asyncio.Queue()
 
-                        if data["type"] == "audio":
-                            audio_bytes = base64.b64decode(data["data"])
-                            logger.info(f"Client Audio: Sending {len(audio_bytes)} bytes to Gemini") # Keep logging
-                            await session.send_audio(audio_bytes)
-                        elif data["type"] == "text":
-                            logger.info(f"Client Text: Sending '{data['text']}' to Gemini") # Keep logging
-                            await session.send_text(data["text"], end_of_turn=True)
+            async def read_ws_to_queue(ws: WebSocket, q: asyncio.Queue):
+                try: 
+                    async for raw in ws.iter_text(): 
+                        data = json.loads(raw)
+                        await q.put(data)
                 except WebSocketDisconnect:
-                    logger.info("WebSocket disconnected by client during send_to_gemini.") # Keep logging
-                    pass # Or re-raise if gather needs to know specifically
-                except Exception as e: # Keep general error logging
-                    logger.error(f"Error in send_to_gemini: {str(e)}")
-                    # Consider sending error to client if websocket is still open
-                    pass
+                    logger.info("read_ws_to_queue: WebSocket disconnected.")
+                    await q.put(None) 
+                except Exception as e:
+                    logger.error(f"read_ws_to_queue: Error: {e}")
+                    await q.put(None) 
 
-            # Define the handler for Gemini-to-client messages
-            async def receive_from_gemini(): # Note: This function will need access to 'websocket' and 'session' from the outer scope.
-                try:
-                    async for resp in session:
-                        # TEXT partials
-                        if resp.text_response and resp.text_response.text:
+            async def send_realtime(session: genai.types.LiveSession, q: asyncio.Queue):
+                try: 
+                    while True:
+                        msg = await q.get()
+                        if msg is None: 
+                            q.task_done()
+                            break
+                        if msg["type"] == "audio":
+                            raw = base64.b64decode(msg["data"])
+                            logger.info(f"send_realtime: Sending audio {len(raw)} bytes to Gemini.")
+                            await session.send_audio(raw)
+                        elif msg["type"] == "text":
+                            logger.info(f"send_realtime: Sending text '{msg['text']}' to Gemini.")
+                            await session.send_text(msg["text"], end_of_turn=True)
+                        q.task_done()
+                except Exception as e:
+                    logger.error(f"send_realtime: Error: {e}")
+                    if not q.empty(): 
+                        q.task_done()
+
+            async def receive_from_gemini_q_task(session: genai.types.LiveSession, q: asyncio.Queue): # Renamed to avoid conflict
+                try: 
+                    async for resp in session: 
+                        if resp.text_response and resp.text_response.text: 
                             text_to_send = resp.text_response.text.strip()
-                            if text_to_send: # Keep check for empty strings
-                                logger.info(f"Gemini Text: Sending '{text_to_send}' to client") # Keep logging
-                                await websocket.send_json({
-                                    "type": "text_chunk",
-                                    "text": text_to_send
-                                })
-                        # AUDIO partials
-                        if resp.audio_response and resp.audio_response.audio:
+                            if text_to_send:
+                                logger.info(f"receive_from_gemini: Got text '{text_to_send}'.")
+                                await q.put({"type":"text_chunk","text": text_to_send})
+                        if resp.audio_response and resp.audio_response.audio: 
                             audio_data = resp.audio_response.audio
-                            if audio_data: # Ensure not sending empty audio
-                                logger.info(f"Gemini Audio: Sending {len(audio_data)} bytes to client") # Keep logging
-                                await websocket.send_bytes(audio_data)
-                except WebSocketDisconnect: # This might be raised if client disconnects while session is active
-                    logger.info("WebSocket disconnected during receive_from_gemini (or Gemini session ended).") # Keep logging
-                    pass # Or re-raise
-                except types.generation_types.StopCandidateException as e: # Keep specific error handling
-                    logger.info(f"Gemini session ended with StopCandidateException in receive_from_gemini: {e}")
-                    try:
-                        await websocket.send_json({"type": "system", "message": "Conversation turn ended."})
-                    except: pass
-                except Exception as e: # Keep general error logging
-                    logger.error(f"Error in receive_from_gemini: {str(e)}")
-                    # Consider sending error to client if websocket is still open
-                    pass
-            
-            # Run both loops concurrently. If one errors or completes, 'gather' will be affected.
-            # If send_to_gemini ends due to WebSocketDisconnect, 
-            # it will cause gather to cancel receive_from_gemini.
-            await asyncio.gather(
-                send_to_gemini(),
-                receive_from_gemini()
-            )
+                            if audio_data:
+                                logger.info(f"receive_from_gemini: Got audio {len(audio_data)} bytes.")
+                                await q.put({"type":"audio_chunk","data": audio_data})
+                except types.generation_types.StopCandidateException:
+                     logger.info("receive_from_gemini: Gemini session ended with StopCandidateException.")
+                except Exception as e:
+                    logger.error(f"receive_from_gemini: Error: {e}")
+                finally: 
+                    await q.put(None) 
+
+            async def write_queue_to_ws(ws: WebSocket, q: asyncio.Queue):
+                try: 
+                    while True:
+                        item = await q.get()
+                        if item is None: 
+                            q.task_done()
+                            break
+                        if item["type"] == "text_chunk":
+                            logger.info(f"write_queue_to_ws: Sending text chunk '{item['text']}'.")
+                            await ws.send_json(item)
+                        else:  
+                            logger.info(f"write_queue_to_ws: Sending audio chunk {len(item['data'])} bytes.")
+                            await ws.send_bytes(item["data"])
+                        q.task_done()
+                except WebSocketDisconnect:
+                     logger.info("write_queue_to_ws: WebSocket disconnected.")
+                except Exception as e:
+                    logger.error(f"write_queue_to_ws: Error: {e}")
+                    if not q.empty():
+                         q.task_done()
+
+            try: 
+                async with asyncio.TaskGroup() as tg:
+                    logger.info("Starting TaskGroup with 4 tasks.")
+                    tg.create_task(read_ws_to_queue(websocket, client_q))
+                    tg.create_task(send_realtime(session, client_q))
+                    tg.create_task(receive_from_gemini_q_task(session, gemini_q)) # Use renamed function
+                    tg.create_task(write_queue_to_ws(websocket, gemini_q))
+                logger.info("TaskGroup finished.")
+            except Exception as e: 
+                logger.error(f"Exception in TaskGroup: {e}")
+            finally:
+                logger.info("Exiting TaskGroup context.")
             
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected by client (caught in main try-except).")
