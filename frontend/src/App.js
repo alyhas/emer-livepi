@@ -50,11 +50,14 @@ function App() {
 
       wsRef.current.onmessage = (event) => {
         const data = JSON.parse(event.data);
+        console.log("Received from Gemini:", data);
         
         if (data.type === "audio_response") {
           // Play audio response from Gemini
+          console.log("Playing audio response, size:", data.data.length);
           playAudioResponse(data.data);
         } else if (data.type === "text_response") {
+          console.log("Received text response:", data.text);
           setAiResponse(prev => prev + data.text);
         } else if (data.type === "system") {
           console.log("System message:", data.message);
