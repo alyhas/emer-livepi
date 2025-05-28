@@ -92,8 +92,8 @@ async def text_to_speech_stream(request: TextToSpeechRequest):
 
                     # Receive and yield the streaming audio response
                     async for message in session.receive():
-                        if message.audio:
-                            yield message.audio.data
+                        if message.data:
+                            yield message.data
                             
             except Exception as e:
                 logger.error(f"Error in audio generation: {str(e)}")
