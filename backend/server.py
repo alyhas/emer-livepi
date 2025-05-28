@@ -156,10 +156,10 @@ async def websocket_tts(websocket: WebSocket):
 
                     # Send streaming audio response
                     async for message_resp in session.receive():
-                        if message_resp.audio:
+                        if message_resp.data:
                             # Convert audio bytes to base64 for JSON transmission
                             import base64
-                            audio_b64 = base64.b64encode(message_resp.audio.data).decode('utf-8')
+                            audio_b64 = base64.b64encode(message_resp.data).decode('utf-8')
                             await websocket.send_json({
                                 "type": "audio_chunk",
                                 "data": audio_b64
