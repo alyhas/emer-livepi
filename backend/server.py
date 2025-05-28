@@ -83,32 +83,21 @@ async def text_to_speech_stream(request: TextToSpeechRequest):
             )
         )
 
-        # Create a live session
-        session = gemini_client.start_live_session(config=config)
-
         async def generate_audio():
             try:
-                # Send text input to the model
-                await session.send_client_content(
-                    turns=[{"role": "user", "parts": [{"text": request.text}]}],
-                    turn_complete=True
-                )
+                # Create a live session using the correct API
+                async with gemini_client.aio.live.connect(model='gemini-2.0-flash-exp', config=config) as session:
+                    # Send text input to the model
+                    await session.send(input=request.text, end_of_turn=True)
 
-                # Receive and yield the streaming audio response
-                async for response in session.receive():
-                    for part in response.parts:
-                        if part.audio:
-                            yield part.audio
+                    # Receive and yield the streaming audio response
+                    async for message in session.receive():
+                        if message.audio:
+                            yield message.audio.data
                             
             except Exception as e:
                 logger.error(f"Error in audio generation: {str(e)}")
                 raise
-            finally:
-                # Clean up the session
-                try:
-                    await session.end()
-                except:
-                    pass
 
         return StreamingResponse(
             generate_audio(), 
