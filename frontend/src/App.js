@@ -41,6 +41,7 @@ function App() {
       // Create WebSocket connection
       const wsUrl = `${BACKEND_URL.replace('https:', 'wss:').replace('http:', 'ws:')}/api/live-audio`;
       wsRef.current = new WebSocket(wsUrl);
+      wsRef.current.binaryType = 'arraybuffer'; // Set binaryType
 
       wsRef.current.onopen = () => {
         console.log("Connected to Gemini Live API");
@@ -48,29 +49,38 @@ function App() {
         setConnectionStatus("Connected");
       };
 
-      wsRef.current.onmessage = (event) => {
+      wsRef.current.onmessage = async (event) => {
+        // —— JSON frames ——
         if (typeof event.data === 'string') {
-          // Handle JSON messages (text_chunk, system, error)
-          const data = JSON.parse(event.data);
-          console.log("Received JSON from Gemini:", data);
-
-          if (data.type === "text_chunk") { // Updated from "text_response"
-            console.log("Received text chunk:", data.text);
-            setAiResponse(prev => prev + data.text);
-          } else if (data.type === "system") {
-            console.log("System message:", data.message);
-            setConnectionStatus(data.message); // Keep this to update UI
-          } else if (data.type === "error") {
-            console.error("Gemini error:", data.message);
-            setConnectionStatus("Error: " + data.message);
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'text_chunk') {
+            setAiResponse(prev => prev + msg.text);
+          } else if (msg.type === 'system') { // Keep existing system message handling
+            console.log("System message:", msg.message);
+            // Example: You might want to update connectionStatus or display system messages
+            setConnectionStatus(msg.message); 
+          } else if (msg.type === 'error') { // Keep existing error message handling
+            console.error("Gemini error:", msg.message);
+            setConnectionStatus("Error: " + msg.message);
           }
-        } else if (event.data instanceof Blob || event.data instanceof ArrayBuffer) {
-          // Handle binary messages (audio)
-          console.log("Received binary audio data from Gemini");
-          // Pass the raw Blob/ArrayBuffer to playAudioResponse
-          playAudioResponse(event.data); 
-        } else {
-          console.warn("Received unknown message type:", typeof event.data, event.data);
+          return;
+        }
+
+        // —— binary frames ——
+        // event.data is an ArrayBuffer
+        const audioCtx = audioContextRef.current 
+          ??= new (window.AudioContext || window.webkitAudioContext)();
+
+        try {
+          const buffer = await audioCtx.decodeAudioData(event.data);
+          const src = audioCtx.createBufferSource();
+          src.buffer = buffer;
+          src.connect(audioCtx.destination);
+          src.start();
+        } catch (e) {
+          console.error("Error decoding or playing audio data:", e);
+          // Optionally, update UI to reflect audio error
+          // setAiResponse(prev => prev + "\n[Audio Playback Error]");
         }
       };
 
@@ -91,61 +101,6 @@ function App() {
       setConnectionStatus("Connection Failed");
     }
   }, []);
-
-const playAudioResponse = async (audioData) => { // audioData is now a Blob or ArrayBuffer
-  try {
-    setIsPlaying(true);
-    
-    // Create audio context if needed (this part can remain similar)
-    if (!audioContextRef.current) {
-      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    
-    let blob;
-    if (audioData instanceof ArrayBuffer) {
-      // If backend sends ArrayBuffer, create a Blob. 
-      // Ensure correct MIME type; 'audio/webm' or 'audio/opus' might be more accurate
-      // if the Gemini API sends native Opus or WebM audio.
-      // For now, let's assume 'audio/webm' as MediaRecorder uses it.
-      // The backend doesn't specify a MIME type when sending bytes, so we infer.
-      blob = new Blob([audioData], { type: 'audio/webm' }); 
-    } else if (audioData instanceof Blob) {
-      // If backend sends a Blob directly
-      blob = audioData;
-    } else {
-      console.error("Unsupported audio data type:", typeof audioData);
-      setIsPlaying(false);
-      return;
-    }
-
-    const audioUrl = URL.createObjectURL(blob);
-    const audio = new Audio(audioUrl);
-    
-    audio.onloadedmetadata = () => {
-      console.log("Audio metadata loaded, duration:", audio.duration);
-    };
-    audio.oncanplaythrough = () => {
-      console.log("Audio can play through.");
-    };
-    audio.onerror = (e) => {
-      console.error("Error playing audio element:", e);
-      setIsPlaying(false);
-      URL.revokeObjectURL(audioUrl);
-    };
-    audio.onended = () => {
-      setIsPlaying(false);
-      URL.revokeObjectURL(audioUrl);
-    };
-    
-    await audio.play();
-    
-  } catch (error) {
-    console.error("Error playing audio:", error);
-    setIsPlaying(false);
-    // Potentially revoke URL here too if created and error occurs before onended
-    // (Handled by audio.onerror)
-  }
-};
 
   const startRecording = async () => {
     try {
