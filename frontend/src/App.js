@@ -50,37 +50,46 @@ function App() {
       };
 
       wsRef.current.onmessage = async (event) => {
-        // —— JSON frames ——
+        // —— JSON frames ——  
         if (typeof event.data === 'string') {
           const msg = JSON.parse(event.data);
-          if (msg.type === 'text_chunk') {
-            setAiResponse(prev => prev + msg.text);
-          } else if (msg.type === 'system') { // Keep existing system message handling
-            console.log("System message:", msg.message);
-            // Example: You might want to update connectionStatus or display system messages
-            setConnectionStatus(msg.message); 
-          } else if (msg.type === 'error') { // Keep existing error message handling
-            console.error("Gemini error:", msg.message);
-            setConnectionStatus("Error: " + msg.message);
+          switch (msg.type) {
+            case 'text_chunk':
+              setAiResponse(prev => prev + msg.text);
+              break;
+            case 'system':
+              // Ensure setConnectionStatus is available in this scope or passed appropriately if needed.
+              // Assuming setConnectionStatus is available from the App component's state.
+              setConnectionStatus(msg.message); 
+              console.log("System message:", msg.message); // Keep console log
+              break;
+            case 'error':
+              // Assuming setConnectionStatus is available.
+              setConnectionStatus('Error: ' + msg.message);
+              console.error("Gemini error:", msg.message); // Keep console log
+              break;
+            default:
+              console.warn("Received unknown JSON message type:", msg.type);
           }
-          return;
+          return;  // important!
         }
 
-        // —— binary frames ——
+        // —— binary frames ——  
         // event.data is an ArrayBuffer
-        const audioCtx = audioContextRef.current 
-          ??= new (window.AudioContext || window.webkitAudioContext)();
-
         try {
-          const buffer = await audioCtx.decodeAudioData(event.data);
+          // Ensure audioContextRef is available from the App component's state.
+          const audioCtx = audioContextRef.current 
+            ??= new (window.AudioContext || window.webkitAudioContext)(); // This assignment creates/reuses the context
+          
+          const audioBuffer = await audioCtx.decodeAudioData(event.data);
           const src = audioCtx.createBufferSource();
-          src.buffer = buffer;
+          src.buffer = audioBuffer;
           src.connect(audioCtx.destination);
           src.start();
         } catch (e) {
-          console.error("Error decoding or playing audio data:", e);
-          // Optionally, update UI to reflect audio error
-          // setAiResponse(prev => prev + "\n[Audio Playback Error]");
+          console.error('Audio playback error:', e);
+          // Optionally, inform the user about audio playback error via UI state:
+          // setAiResponse(prev => prev + "\n[Audio Playback Error]"); 
         }
       };
 

@@ -161,88 +161,65 @@ async def gemini_live_audio(websocket: WebSocket):
             })
 
             # Define the handler for client-to-Gemini messages
-            async def handle_client_to_gemini_loop():
+            async def send_to_gemini(): # Note: This function will need access to 'websocket' and 'session' from the outer scope.
                 try:
                     while True:
-                        message = await websocket.receive_text()
-                        data = json.loads(message)
-                        
+                        text = await websocket.receive_text()
+                        data = json.loads(text)
+
                         if data["type"] == "audio":
-                            audio_data = base64.b64decode(data["data"])
-                            logger.info(f"Client Audio: Sending {len(audio_data)} bytes to Gemini")
-                            await session.send_audio(audio_data)
+                            audio_bytes = base64.b64decode(data["data"])
+                            logger.info(f"Client Audio: Sending {len(audio_bytes)} bytes to Gemini") # Keep logging
+                            await session.send_audio(audio_bytes)
                         elif data["type"] == "text":
-                            logger.info(f"Client Text: Sending '{data['text']}' to Gemini")
-                            # Ensure end_of_turn is True for text messages that expect a response turn
-                            await session.send_text(data['text'], end_of_turn=True) 
-                        elif data["type"] == "config": 
-                            # Placeholder for potential future config changes from client
-                            logger.info(f"Config update received from client: {data}")
-                            # Example: Update voice (would require re-creating session or specific API support)
-                            # new_voice = data.get("voice_name", "Puck")
-                            # session.config.speech_config.voice_config.prebuilt_voice_config.voice_name = new_voice
-                            # logger.info(f"Voice config updated to: {new_voice}")
-
-
+                            logger.info(f"Client Text: Sending '{data['text']}' to Gemini") # Keep logging
+                            await session.send_text(data["text"], end_of_turn=True)
                 except WebSocketDisconnect:
-                    logger.info("WebSocket disconnected by client during send loop.")
-                    # This will cause asyncio.gather to cancel the other task.
-                except Exception as e:
-                    logger.error(f"Error in client-to-Gemini loop: {str(e)}")
-                    # Notify client if possible
-                    try:
-                        await websocket.send_json({"type": "error", "message": f"Error processing your input: {str(e)}"})
-                    except: # Websocket might already be closed
-                        pass
-                    # This exception will also cause gather to cancel the other task.
-
+                    logger.info("WebSocket disconnected by client during send_to_gemini.") # Keep logging
+                    pass # Or re-raise if gather needs to know specifically
+                except Exception as e: # Keep general error logging
+                    logger.error(f"Error in send_to_gemini: {str(e)}")
+                    # Consider sending error to client if websocket is still open
+                    pass
 
             # Define the handler for Gemini-to-client messages
-            async def handle_gemini_to_client_loop():
+            async def receive_from_gemini(): # Note: This function will need access to 'websocket' and 'session' from the outer scope.
                 try:
-                    async for resp in session:  # Iterate directly on session
-                        # TEXT responses
+                    async for resp in session:
+                        # TEXT partials
                         if resp.text_response and resp.text_response.text:
                             text_to_send = resp.text_response.text.strip()
-                            if text_to_send: # Ensure not sending empty strings
-                                logger.info(f"Gemini Text: Sending '{text_to_send}' to client")
+                            if text_to_send: # Keep check for empty strings
+                                logger.info(f"Gemini Text: Sending '{text_to_send}' to client") # Keep logging
                                 await websocket.send_json({
                                     "type": "text_chunk",
                                     "text": text_to_send
                                 })
-                        # AUDIO responses
+                        # AUDIO partials
                         if resp.audio_response and resp.audio_response.audio:
                             audio_data = resp.audio_response.audio
                             if audio_data: # Ensure not sending empty audio
-                                logger.info(f"Gemini Audio: Sending {len(audio_data)} bytes to client")
+                                logger.info(f"Gemini Audio: Sending {len(audio_data)} bytes to client") # Keep logging
                                 await websocket.send_bytes(audio_data)
-                
-                except WebSocketDisconnect: 
-                    # This might occur if the session is closed unexpectedly from server-side or client disconnects
-                    # while this loop is awaiting `session`.
-                    logger.info("WebSocket disconnected (or Gemini session ended) during Gemini-to-client receive loop.")
-                except types.generation_types.StopCandidateException as e:
-                    logger.info(f"Gemini session ended with StopCandidateException: {e}")
-                    # This is a normal way for Gemini to indicate the end of a turn or session.
-                    # You might want to send a specific system message to the client.
+                except WebSocketDisconnect: # This might be raised if client disconnects while session is active
+                    logger.info("WebSocket disconnected during receive_from_gemini (or Gemini session ended).") # Keep logging
+                    pass # Or re-raise
+                except types.generation_types.StopCandidateException as e: # Keep specific error handling
+                    logger.info(f"Gemini session ended with StopCandidateException in receive_from_gemini: {e}")
                     try:
                         await websocket.send_json({"type": "system", "message": "Conversation turn ended."})
-                    except:
-                        pass
-                except Exception as e:
-                    logger.error(f"Error in Gemini-to-client loop: {str(e)}")
-                    # Notify client if possible
-                    try:
-                        await websocket.send_json({"type": "error", "message": f"Error receiving data from Gemini: {str(e)}"})
-                    except: # Websocket might already be closed
-                        pass
+                    except: pass
+                except Exception as e: # Keep general error logging
+                    logger.error(f"Error in receive_from_gemini: {str(e)}")
+                    # Consider sending error to client if websocket is still open
+                    pass
             
             # Run both loops concurrently. If one errors or completes, 'gather' will be affected.
-            # If handle_client_to_gemini_loop ends due to WebSocketDisconnect, 
-            # it will cause gather to cancel handle_gemini_to_client_loop.
+            # If send_to_gemini ends due to WebSocketDisconnect, 
+            # it will cause gather to cancel receive_from_gemini.
             await asyncio.gather(
-                handle_client_to_gemini_loop(),
-                handle_gemini_to_client_loop()
+                send_to_gemini(),
+                receive_from_gemini()
             )
             
     except WebSocketDisconnect:
