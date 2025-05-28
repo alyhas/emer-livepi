@@ -124,7 +124,6 @@ async def get_available_voices():
 @api_router.websocket("/tts-websocket")
 async def websocket_tts(websocket: WebSocket):
     await websocket.accept()
-    session = None
     
     try:
         while True:
@@ -150,22 +149,17 @@ async def websocket_tts(websocket: WebSocket):
                     )
                 )
 
-                # Create a new live session
-                session = gemini_client.start_live_session(config=config)
+                # Create a live session using the correct API
+                async with gemini_client.aio.live.connect(model='gemini-2.0-flash-exp', config=config) as session:
+                    # Send text input to the model
+                    await session.send(input=text, end_of_turn=True)
 
-                # Send text input to the model
-                await session.send_client_content(
-                    turns=[{"role": "user", "parts": [{"text": text}]}],
-                    turn_complete=True
-                )
-
-                # Send streaming audio response
-                async for response in session.receive():
-                    for part in response.parts:
-                        if part.audio:
+                    # Send streaming audio response
+                    async for message_resp in session.receive():
+                        if message_resp.audio:
                             # Convert audio bytes to base64 for JSON transmission
                             import base64
-                            audio_b64 = base64.b64encode(part.audio).decode('utf-8')
+                            audio_b64 = base64.b64encode(message_resp.audio.data).decode('utf-8')
                             await websocket.send_json({
                                 "type": "audio_chunk",
                                 "data": audio_b64
@@ -176,24 +170,11 @@ async def websocket_tts(websocket: WebSocket):
             except Exception as e:
                 logger.error(f"Error in WebSocket TTS: {str(e)}")
                 await websocket.send_json({"error": str(e)})
-            finally:
-                if session:
-                    try:
-                        await session.end()
-                    except:
-                        pass
-                    session = None
                     
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected")
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}")
-    finally:
-        if session:
-            try:
-                await session.end()
-            except:
-                pass
 
 # Include the router in the main app
 app.include_router(api_router)
