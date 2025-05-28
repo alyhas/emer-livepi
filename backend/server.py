@@ -82,6 +82,52 @@ async def get_available_voices():
     voices = ["Puck", "Charon", "Kore", "Fenrir", "Aoede", "Leda", "Orus", "Zephyr"]
     return {"voices": voices}
 
+@api_router.post("/test-gemini-text")
+async def test_gemini_text(request: dict):
+    """Simple test endpoint for Gemini Live API with text"""
+    try:
+        text = request.get("text", "Hello!")
+        logger.info(f"Testing Gemini with text: {text}")
+        
+        config = types.LiveConnectConfig(
+            response_modalities=["AUDIO"],
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Puck")
+                )
+            )
+        )
+        
+        async with genai_client.aio.live.connect(model=MODEL, config=config) as session:
+            logger.info("Connected to Gemini for text test")
+            await session.send(input=text, end_of_turn=True)
+            
+            responses = []
+            turn = session.receive()
+            async for response in turn:
+                logger.info(f"Response type: {type(response)}")
+                logger.info(f"Response attributes: {dir(response)}")
+                
+                if hasattr(response, 'text') and response.text:
+                    responses.append({"type": "text", "content": response.text})
+                    
+                if hasattr(response, 'parts'):
+                    for part in response.parts:
+                        if hasattr(part, 'text') and part.text:
+                            responses.append({"type": "text", "content": part.text})
+                        if hasattr(part, 'inline_data'):
+                            responses.append({"type": "audio", "size": len(part.inline_data.data) if part.inline_data.data else 0})
+                            
+                break  # Just get first response for test
+            
+            return {"status": "success", "responses": responses}
+            
+    except Exception as e:
+        logger.error(f"Test failed: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return {"status": "error", "message": str(e)}
+
 # WebSocket endpoint for Gemini Live Audio Dialog
 @api_router.websocket("/live-audio")
 async def gemini_live_audio(websocket: WebSocket):
