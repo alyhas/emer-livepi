@@ -148,23 +148,49 @@ async def gemini_live_audio(websocket: WebSocket):
                     while True:
                         turn = session.receive()
                         async for response in turn:
-                            if response.data:
+                            logger.info(f"Received response: {type(response)}")
+                            
+                            # Handle different response types
+                            if hasattr(response, 'data') and response.data:
                                 # Send audio response back to client
                                 audio_b64 = base64.b64encode(response.data).decode('utf-8')
                                 await websocket.send_json({
                                     "type": "audio_response",
                                     "data": audio_b64
                                 })
+                                logger.info("Sent audio response to client")
                             
-                            if response.text:
+                            if hasattr(response, 'text') and response.text:
                                 # Send text response back to client
                                 await websocket.send_json({
                                     "type": "text_response",
                                     "text": response.text
                                 })
-                                
+                                logger.info(f"Sent text response: {response.text}")
+                            
+                            # Check for parts in response
+                            if hasattr(response, 'parts'):
+                                for part in response.parts:
+                                    if hasattr(part, 'inline_data') and part.inline_data:
+                                        # Handle inline audio data
+                                        audio_b64 = base64.b64encode(part.inline_data.data).decode('utf-8')
+                                        await websocket.send_json({
+                                            "type": "audio_response",
+                                            "data": audio_b64
+                                        })
+                                        logger.info("Sent inline audio response to client")
+                                    
+                                    if hasattr(part, 'text') and part.text:
+                                        await websocket.send_json({
+                                            "type": "text_response",
+                                            "text": part.text
+                                        })
+                                        logger.info(f"Sent part text response: {part.text}")
+                                        
                 except Exception as e:
                     logger.error(f"Error handling Gemini responses: {str(e)}")
+                    import traceback
+                    logger.error(traceback.format_exc())
             
             # Run both handlers concurrently
             await asyncio.gather(
