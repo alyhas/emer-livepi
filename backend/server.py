@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -35,7 +35,7 @@ genai_client = genai.Client(
     api_key=GEMINI_API_KEY,
 )
 
-MODEL = "models/gemini-2.0-flash-live-001"
+MODEL = "gemini-2.5-flash-preview-native-audio-dialog"
 
 # Configure logging
 logging.basicConfig(
@@ -127,140 +127,6 @@ async def test_gemini_text(request: dict):
         import traceback
         logger.error(traceback.format_exc())
         return {"status": "error", "message": str(e)}
-
-# WebSocket endpoint for Gemini Live Audio Dialog
-@api_router.websocket("/live-audio")
-async def gemini_live_audio(websocket: WebSocket):
-    await websocket.accept()
-    logger.info("WebSocket connected for Gemini Live Audio")
-    
-    # Default configuration for audio dialog
-    config = types.LiveConnectConfig(
-        response_modalities=["AUDIO"],
-        media_resolution="MEDIA_RESOLUTION_MEDIUM",
-        speech_config=types.SpeechConfig(
-            language_code="en-US",
-            voice_config=types.VoiceConfig(
-                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Puck")
-            )
-        ),
-        context_window_compression=types.ContextWindowCompressionConfig(
-            trigger_tokens=25600,
-            sliding_window=types.SlidingWindow(target_tokens=12800),
-        ),
-    )
-    
-    try:
-        async with genai_client.aio.live.connect(model=MODEL, config=config) as session:
-            logger.info("Connected to Gemini Live API")
-            
-            # Send initial system message
-            await websocket.send_json({
-                "type": "system",
-                "message": "Connected to Gemini Live API. You can now talk!"
-            })
-            
-            async def handle_websocket_messages():
-                """Handle incoming messages from the client"""
-                try:
-                    while True:
-                        message = await websocket.receive_text()
-                        data = json.loads(message)
-                        
-                        if data["type"] == "audio":
-                            # Send audio data to Gemini
-                            audio_data = base64.b64decode(data["data"])
-                            logger.info(f"Sending audio data: {len(audio_data)} bytes")
-                            await session.send(input={
-                                "data": audio_data,
-                                "mime_type": "audio/webm"  # Changed from audio/pcm to webm
-                            })
-                            
-                        elif data["type"] == "text":
-                            # Send text message to Gemini
-                            logger.info(f"Sending text: {data['text']}")
-                            await session.send(input=data["text"], end_of_turn=True)
-                            
-                        elif data["type"] == "config":
-                            # Update voice configuration if needed
-                            logger.info(f"Config update: {data}")
-                            
-                except WebSocketDisconnect:
-                    logger.info("WebSocket disconnected")
-                except Exception as e:
-                    logger.error(f"Error handling websocket messages: {str(e)}")
-            
-            async def handle_gemini_responses():
-                """Handle responses from Gemini Live API"""
-                try:
-                    while True:
-                        turn = session.receive()
-                        async for response in turn:
-                            logger.info(f"=== DEBUGGING RESPONSE ===")
-                            logger.info(f"Response type: {type(response)}")
-                            
-                            # Check server_content which contains the actual model response
-                            if hasattr(response, 'server_content') and response.server_content:
-                                server_content = response.server_content
-                                logger.info(f"Server content type: {type(server_content)}")
-                                logger.info(f"Server content dir: {dir(server_content)}")
-                                
-                                # Check for model_parts in server_content
-                                if hasattr(server_content, 'model_parts') and server_content.model_parts:
-                                    logger.info(f"Found model_parts: {len(server_content.model_parts)}")
-                                    for i, part in enumerate(server_content.model_parts):
-                                        logger.info(f"Part {i} type: {type(part)}")
-                                        logger.info(f"Part {i} dir: {dir(part)}")
-                                        
-                                        # Handle text parts
-                                        if hasattr(part, 'text') and part.text:
-                                            part_text = str(part.text)
-                                            logger.info(f"Part {i} text: '{part_text}'")
-                                            if part_text.strip():
-                                                await websocket.send_json({
-                                                    "type": "text_response",
-                                                    "text": part_text
-                                                })
-                                                logger.info(f"✅ Sent part text: {part_text}")
-                                        
-                                        # Handle audio parts (inline_data)
-                                        if hasattr(part, 'inline_data') and part.inline_data:
-                                            if hasattr(part.inline_data, 'data') and part.inline_data.data:
-                                                audio_data = part.inline_data.data
-                                                logger.info(f"Audio data size: {len(audio_data)} bytes")
-                                                audio_b64 = base64.b64encode(audio_data).decode('utf-8')
-                                                await websocket.send_json({
-                                                    "type": "audio_response",
-                                                    "data": audio_b64
-                                                })
-                                                logger.info(f"✅ Sent audio chunk: {len(audio_data)} bytes")
-                                else:
-                                    logger.info("No model_parts found in server_content")
-                            else:
-                                logger.info("No server_content found")
-                                        
-                except Exception as e:
-                    logger.error(f"Error handling Gemini responses: {str(e)}")
-                    import traceback
-                    logger.error(traceback.format_exc())
-            
-            # Run both handlers concurrently
-            await asyncio.gather(
-                handle_websocket_messages(),
-                handle_gemini_responses()
-            )
-            
-    except WebSocketDisconnect:
-        logger.info("WebSocket disconnected")
-    except Exception as e:
-        logger.error(f"Error in live audio websocket: {str(e)}")
-        try:
-            await websocket.send_json({
-                "type": "error",
-                "message": str(e)
-            })
-        except:
-            pass
 
 # Include the router in the main app
 app.include_router(api_router)
